@@ -1,2 +1,10 @@
 challenge_input/
 research/
+node_modules/
+dist/
+.next/
+out/
+.env
+*.tsbuildinfo
+next-env.d.ts
+.dev/

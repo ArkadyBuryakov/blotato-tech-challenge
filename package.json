@@ -1,0 +1,13 @@
+{
+  "name": "ig-automations",
+  "private": true,
+  "packageManager": "pnpm@10.18.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "pnpm --filter @app/web build && pnpm --filter @app/server build",
+    "dev": "pnpm --parallel --filter @app/server --filter @app/web dev",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "start": "node apps/server/dist/web.js"
+  }
+}

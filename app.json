@@ -1,0 +1,21 @@
+{
+  "name": "instagram-automations",
+  "description": "Comment/DM automations for Instagram professional accounts (Fastify + Next.js + pg-boss).",
+  "buildpacks": [{ "url": "heroku/nodejs" }],
+  "formation": {
+    "web": { "quantity": 1, "size": "basic" },
+    "worker": { "quantity": 1, "size": "basic" }
+  },
+  "addons": [{ "plan": "heroku-postgresql:essential-0" }],
+  "env": {
+    "NODE_ENV": { "value": "production" },
+    "BETTER_AUTH_URL": { "description": "Public origin, e.g. https://demo.example.com" },
+    "BETTER_AUTH_SECRET": { "generator": "secret" },
+    "INSTAGRAM_MODE": { "value": "live" },
+    "INSTAGRAM_APP_ID": { "description": "Instagram app ID (Meta app > Instagram > API setup with Instagram login)" },
+    "INSTAGRAM_APP_SECRET": { "description": "Instagram app secret (also signs webhooks)" },
+    "META_WEBHOOK_VERIFY_TOKEN": { "generator": "secret" },
+    "COMMENT_RECONCILER": { "value": "true" },
+    "ENABLE_DEV_TOOLS": { "value": "false" }
+  }
+}
