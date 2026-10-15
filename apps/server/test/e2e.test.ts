@@ -72,7 +72,7 @@ beforeAll(async () => {
   await db.destroy();
 
   rt = await createRuntime(cfg, { ig: recordingIg });
-  rt.log.level = "warn";
+  rt.log.level = "error"; // expected failures in these tests log warnings
   await startWorkers(rt.boss, rt.deps, { reconciler: false });
   app = await buildApp(cfg, rt.auth, rt.deps, mock);
 }, 30_000);

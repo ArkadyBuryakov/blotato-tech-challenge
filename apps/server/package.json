@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/bin/dev.ts",
     "build": "tsup",
-    "test": "vitest run",
+    "test": "vitest run --root ../.. --project server",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx --env-file-if-exists=../../.env src/bin/release.ts"
   },
