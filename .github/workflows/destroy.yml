@@ -1,0 +1,47 @@
+name: Destroy Heroku deployment
+
+# Manual only. Deletes the app, its dynos, config and the Postgres add-on (all data).
+# Re-running "Deploy to Heroku" recreates everything from scratch.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type the Heroku app name to confirm permanent deletion
+        required: true
+
+jobs:
+  # Runs before the approval gate, so a typo fails fast instead of asking for approval.
+  confirm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          APP: ${{ vars.HEROKU_APP_NAME }}
+        run: |
+          if [ -z "$APP" ] || [ "$CONFIRM" != "$APP" ]; then
+            echo "Confirmation '$CONFIRM' does not match the app name; nothing was deleted."
+            exit 1
+          fi
+
+  destroy:
+    needs: confirm
+    runs-on: ubuntu-latest
+    environment: production # same approval gate as deploys
+    env:
+      HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      APP: ${{ vars.HEROKU_APP_NAME }}
+    steps:
+
+      - name: Install Heroku CLI
+        run: command -v heroku || curl -fsSL https://cli-assets.heroku.com/install.sh | sh
+
+      - name: Destroy app
+        run: |
+          if heroku apps:info -a "$APP" >/dev/null 2>&1; then
+            heroku apps:destroy -a "$APP" --confirm "$APP"
+            echo "### Destroyed \`$APP\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "Left in place: the Cloudflare CNAME and the Meta app settings (webhook URL will fail until redeployed)." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "App $APP does not exist; nothing to do." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

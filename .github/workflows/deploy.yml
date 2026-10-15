@@ -1,0 +1,108 @@
+name: Deploy to Heroku
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits instead of cancelling a deploy mid-flight.
+concurrency:
+  group: heroku-production
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: automations_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    # Required reviewers on this environment = the approval gate (Settings → Environments).
+    environment:
+      name: production
+      url: https://${{ vars.APP_DOMAIN }}
+    env:
+      HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      APP: ${{ vars.HEROKU_APP_NAME }}
+      DOMAIN: ${{ vars.APP_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Heroku rejects pushes from shallow clones
+
+      - name: Install Heroku CLI
+        run: command -v heroku || curl -fsSL https://cli-assets.heroku.com/install.sh | sh
+
+      - name: Provision app (idempotent)
+        run: |
+          if ! heroku apps:info -a "$APP" >/dev/null 2>&1; then
+            heroku apps:create "$APP" --stack heroku-24
+          fi
+          if ! heroku addons -a "$APP" | grep -q heroku-postgresql; then
+            heroku addons:create heroku-postgresql:essential-0 -a "$APP" --wait
+          fi
+          if ! heroku domains -a "$APP" | grep -q "$DOMAIN"; then
+            heroku domains:add "$DOMAIN" -a "$APP"
+          fi
+
+      - name: Sync config vars
+        env:
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          INSTAGRAM_APP_ID: ${{ secrets.INSTAGRAM_APP_ID }}
+          INSTAGRAM_APP_SECRET: ${{ secrets.INSTAGRAM_APP_SECRET }}
+          META_WEBHOOK_VERIFY_TOKEN: ${{ secrets.META_WEBHOOK_VERIFY_TOKEN }}
+        run: |
+          heroku config:set -a "$APP" \
+            NODE_ENV=production \
+            INSTAGRAM_MODE=live \
+            BETTER_AUTH_URL="https://$DOMAIN" \
+            BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
+            INSTAGRAM_APP_ID="$INSTAGRAM_APP_ID" \
+            INSTAGRAM_APP_SECRET="$INSTAGRAM_APP_SECRET" \
+            META_WEBHOOK_VERIFY_TOKEN="$META_WEBHOOK_VERIFY_TOKEN" \
+            COMMENT_RECONCILER=true \
+            ENABLE_DEV_TOOLS=false >/dev/null
+
+      - name: Push to Heroku (build + release phase migrations)
+        run: git push "https://heroku:${HEROKU_API_KEY}@git.heroku.com/${APP}.git" "HEAD:refs/heads/main" --force
+
+      - name: Dynos and TLS
+        run: |
+          heroku ps:type web=basic worker=basic -a "$APP"
+          heroku ps:scale web=1 worker=1 -a "$APP"
+          heroku certs:auto:enable -a "$APP" || true
+
+      - name: Smoke test
+        run: |
+          url="https://$(heroku apps:info -a "$APP" --json | jq -r .app.web_url | sed -E 's#https?://##; s#/$##')/api/health"
+          for i in $(seq 1 30); do curl -fsS "$url" && exit 0; sleep 5; done
+          echo "health check failed: $url"; exit 1
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed \`$APP\`"
+            echo "DNS: CNAME \`$DOMAIN\` → \`$(heroku domains -a "$APP" --json | jq -r --arg d "$DOMAIN" '.[] | select(.hostname==$d) | .cname')\` (Cloudflare: DNS only)"
+            echo "OAuth redirect URI: \`https://$DOMAIN/api/auth/callback/instagram\`"
+            echo "Webhook callback: \`https://$DOMAIN/api/webhooks/instagram\`"
+          } >> "$GITHUB_STEP_SUMMARY"

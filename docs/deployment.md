@@ -41,6 +41,19 @@ the schema, which is one more reason migrations are forward-compatible.
 Platform risk: in Feb 2026 Heroku moved to "sustaining engineering" mode. That is fine for a demo,
 and the AWS plan below is the exit path.
 
+### CI/CD (GitHub Actions)
+
+* `.github/workflows/deploy.yml` runs on push to `main` (or manually). It runs typecheck and tests
+  against Postgres, then waits for approval, then provisions the app if it is missing (app,
+  Postgres, domain), syncs the config vars from GitHub secrets, pushes to Heroku (the release
+  phase migrates), sets the dyno types and runs a health check.
+* `.github/workflows/destroy.yml` is manual only. You type the app name to confirm, then approve,
+  and it runs `heroku apps:destroy` (the database is deleted too). Deploying again recreates
+  everything.
+* The approval gate is the `production` environment with required reviewers. Secrets live in that
+  environment, so they are only released to approved jobs. The app name and domain are repository
+  variables.
+
 ## AWS alternative (Terraform)
 
 The same three processes map 1:1, and Postgres remains the only stateful component. No code changes
