@@ -30,8 +30,8 @@ Meta app configuration:
 * Webhook callback: `https://demo.example.com/api/webhooks/instagram`, verify token = `META_WEBHOOK_VERIFY_TOKEN`, fields `comments`, `messages`
 * Privacy policy `/privacy/`, data deletion `/data-deletion/`
 
-Sizing: demo = web Basic ×1, worker Basic ×1, Postgres Essential-0 (~$19/mo). Production = web
-Standard-1X ×2 (preboot), worker Standard-2X ×2, Postgres Standard-0 (~$200/mo). Basic dynos don't
+Sizing: demo = web Basic ×1, worker Basic ×1, Postgres Essential-0 (\~$19/mo). Production = web
+Standard-1X ×2 (preboot), worker Standard-2X ×2, Postgres Standard-0 (\~$200/mo). Basic dynos don't
 sleep, which matters because webhooks must not hit cold starts.
 
 Deploy safety: with preboot, old and new code overlap for about 3 minutes, so migrations are

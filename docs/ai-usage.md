@@ -12,7 +12,7 @@
 - Research on the Instagram platform constraints that shaped the design: the 24h messaging
   window, single private reply per comment, webhook retry behaviour, access levels, and the
   token model (`research/`, not committed).
-- Review of the generated design and code; <!-- list what you changed, rejected or rewrote -->
+- Review of the generated design and code.
 
 ## Done with AI (Claude Code)
 - Implementation of the code in this repository from the documents above: core domain package,
@@ -25,4 +25,4 @@
 - `pnpm test`: core unit tests and an end-to-end suite against real Postgres with a mock
   Instagram client. The suite covers OAuth login, the full "pricing" flow, dedupe, re-asking for
   an email, timeouts, versioning and permanent failures.
-- <!-- live test with real Instagram accounts / demo video link -->
+- live test with real Instagram accounts.

@@ -121,12 +121,12 @@ sequenceDiagram
   participant IG as Graph API
   M->>W: POST /api/webhooks/instagram (X-Hub-Signature-256)
   W->>W: verify HMAC, normalize, drop echoes/own comments
-  W->>DB: tx{ INSERT inbox_events ON CONFLICT DO NOTHING; enqueue route-event }
+  W->>DB: tx{ INSERT inbox_events ON CONFLICT DO NOTHING#59; enqueue route-event }
   W-->>M: 200 (no Graph API calls in the request)
-  R->>DB: tx{ lock event; DM from a waited-on contact? resume : match triggers → INSERT run, trigger step, pending children; enqueue execute-step }
-  S->>DB: tx1{ lock run; step pending? render inputs; mark running; choose recipient }
+  R->>DB: tx{ lock event#59; DM from a waited-on contact? resume : match triggers → INSERT run, trigger step, pending children#59; enqueue execute-step }
+  S->>DB: tx1{ lock run#59; step pending? render inputs#59; mark running#59; choose recipient }
   S->>IG: send (outside any transaction)
-  S->>DB: tx2{ lock run; store output; INSERT children pending; enqueue; recompute run status }
+  S->>DB: tx2{ lock run#59; store output#59; INSERT children pending#59; enqueue#59; recompute run status }
 ```
 
 1. **Ingress** (`http/webhooks.ts`, `engine/router.ts#ingestEvents`). Verify the signature over
