@@ -140,10 +140,17 @@ drop table private_replies;
   {
     id: "005_generic_step_state",
     // Suspended steps are block-agnostic: a deadline plus block-private state. Backfilled from the
-    // wait-for-reply columns, which stay until a later release (nothing reads them any more).
+    // wait-for-reply columns (dropped in 006).
     sql: `
 alter table run_steps add column expires_at timestamptz, add column state jsonb not null default '{}';
 update run_steps set expires_at = wait_expires_at, state = jsonb_build_object('retries', wait_retries) where status = 'waiting';
+`,
+  },
+  {
+    id: "006_drop_wait_columns",
+    // Replaced by expires_at / state in 005.
+    sql: `
+alter table run_steps drop column wait_expires_at, drop column wait_retries;
 `,
   },
 ];
