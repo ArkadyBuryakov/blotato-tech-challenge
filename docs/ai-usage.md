@@ -5,14 +5,16 @@
 
 ## Done by me
 - Product requirements and scope: block set, versioning, templates, execution log
-  (`challenge_input/requirements.md`, not committed).
+  (`./requirements.md`).
 - Stack and infrastructure decisions: BetterAuth + genericOAuth for Instagram, Fastify,
   Next.js static export on the same origin, pg-boss, a single Heroku app with web/worker/release,
-  Cloudflare DNS (`challenge_input/architecture.md`).
+  Cloudflare DNS (`./requirements.md`).
 - Research on the Instagram platform constraints that shaped the design: the 24h messaging
   window, single private reply per comment, webhook retry behaviour, access levels, and the
   token model (`research/`, not committed).
 - Review of the generated design and code.
+    - Minor web app updates
+    - Switch to abstract declarative workflow blocks
 
 ## Done with AI (Claude Code)
 - Implementation of the code in this repository from the documents above: core domain package,

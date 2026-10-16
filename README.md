@@ -9,6 +9,12 @@ with a comment on their Instagram posts.
 That flow ships as a template, but underneath it is a general **graph of trigger, action and control
 blocks**. Versions are immutable, every run is logged, and all of it runs on Postgres + pg-boss.
 
+**Live demo:** [blotato-demo.buryakov.pro](https://blotato-demo.buryakov.pro)
+
+> **Note:** the app is not verified by Meta, so comment webhooks may not be delivered. In that case
+> new comments are picked up by the comment reconciler instead, which can delay a run by up to
+> 5 minutes.
+
 **Docs**
 - [Architecture, data model, execution model, reliability & concurrency](docs/architecture.md)
 - [Deployment: Heroku and the AWS/Terraform alternative](docs/deployment.md)
