@@ -29,9 +29,9 @@ dependencies passed explicitly as records of functions, and effects kept at the 
 | Deploy | Heroku (web / worker / release), AWS plan in docs |
 
 ```
-packages/core    pure domain: block catalog, graph validation, templating, webhook normalization,
-                 trigger matching, DM addressing, templates (unit tested)
-apps/server      Fastify API + webhooks, engine (router, executor, waits), pg-boss worker, migrations
+packages/core    pure domain: declared blocks and event kinds, graph validation, templating,
+                 webhook normalization, trigger matching, DM addressing, templates (unit tested)
+apps/server      Fastify API + webhooks, block-agnostic engine + block handlers, pg-boss worker, migrations
 apps/web         Next.js UI: automations, graph editor, templates, execution log, simulator
 ```
 

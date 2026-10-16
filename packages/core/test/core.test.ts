@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   automationTemplates,
+  blockDefaults,
+  blockSpecs,
+  blockTypes,
   chooseDelivery,
   deriveRunStatus,
   evaluateReply,
@@ -9,6 +12,7 @@ import {
   matchesKeywords,
   nextNodes,
   normalizeWebhook,
+  parseConfig,
   renderTemplate,
   triggerMatches,
   validateGraph,
@@ -122,7 +126,7 @@ describe("rules", () => {
   });
 
   it("waits for a valid email, re-asking a limited number of times", () => {
-    const wait = pricingGraph().nodes.find((n) => n.id === "wait")!;
+    const wait = parseConfig("control.wait_for_reply", pricingGraph().nodes.find((n) => n.id === "wait")!.config);
     expect(evaluateReply(wait, reply("my mail is Bob@Example.com"), 0)).toMatchObject({ kind: "accept", output: { email: "bob@example.com" } });
     expect(evaluateReply(wait, reply("what?"), 0).kind).toBe("retry");
     expect(evaluateReply(wait, reply("what?"), 2).kind).toBe("ignore");
@@ -142,5 +146,19 @@ describe("rules", () => {
     expect(deriveRunStatus(["succeeded", "timed_out"])).toBe("succeeded");
     expect(nextNodes(pricingGraph(), "wait", "received")).toEqual(["send_link"]);
     expect(nextNodes(pricingGraph(), "wait", "timeout")).toEqual([]);
+  });
+});
+
+describe("block registry", () => {
+  it("declares a trigger exactly on trigger blocks", () => {
+    for (const t of blockTypes) expect(blockSpecs[t].kind === "trigger", t).toBe(blockSpecs[t].trigger !== undefined);
+  });
+
+  it("gives every block valid defaults for the editor", () => {
+    for (const t of blockTypes) {
+      const { config, inputs } = blockDefaults(t);
+      expect(blockSpecs[t].config.safeParse(config).success, t).toBe(true);
+      expect(Object.keys(inputs), t).toEqual(blockSpecs[t].inputFields.map((f) => f.key));
+    }
   });
 });

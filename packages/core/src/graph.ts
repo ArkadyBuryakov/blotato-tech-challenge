@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { blockCatalog, blockSchemas, isBlockType, type BlockType } from "./blocks";
+import { blockSpecs, isBlockType, isTriggerType } from "./blocks";
 import { extractRefs } from "./template";
 
 export const graphNodeSchema = z.object({
@@ -33,8 +33,7 @@ export type GraphIssue = { readonly nodeId?: string; readonly message: string };
 export const findNode = (g: Graph, id: string): GraphNode | undefined =>
   g.nodes.find((n) => n.id === id);
 
-export const triggerNode = (g: Graph): GraphNode | undefined =>
-  g.nodes.find((n) => isBlockType(n.type) && blockCatalog[n.type].kind === "trigger");
+export const triggerNode = (g: Graph): GraphNode | undefined => g.nodes.find((n) => isTriggerType(n.type));
 
 export const incoming = (g: Graph, id: string): readonly GraphEdge[] =>
   g.edges.filter((e) => e.target === id);
@@ -53,8 +52,8 @@ export const ancestors = (g: Graph, id: string): readonly string[] => {
 
 const nodeIssues = (n: GraphNode): GraphIssue[] => {
   if (!isBlockType(n.type)) return [{ nodeId: n.id, message: `Unknown block type "${n.type}"` }];
-  const schema = blockSchemas[n.type];
-  return [schema.config.safeParse(n.config), schema.inputs.safeParse(n.inputs)].flatMap((r) =>
+  const spec = blockSpecs[n.type];
+  return [spec.config.safeParse(n.config), spec.inputs.safeParse(n.inputs)].flatMap((r) =>
     r.success ? [] : r.error.issues.map((i) => ({ nodeId: n.id, message: i.message })),
   );
 };
@@ -67,7 +66,7 @@ const refIssues = (g: Graph, n: GraphNode): GraphIssue[] => {
       const src = findNode(g, nodeId);
       if (!src || !upstream.has(nodeId))
         return [{ nodeId: n.id, message: `{{${nodeId}.${path}}} must reference an upstream block` }];
-      const outputs = isBlockType(src.type) ? blockCatalog[src.type].outputs : [];
+      const outputs = isBlockType(src.type) ? blockSpecs[src.type].outputs : [];
       return outputs.includes(path)
         ? []
         : [{ nodeId: n.id, message: `Block "${nodeId}" has no output "${path}"` }];
@@ -84,9 +83,7 @@ const refIssues = (g: Graph, n: GraphNode): GraphIssue[] => {
  */
 export const validateGraph = (g: Graph): readonly GraphIssue[] => {
   const ids = new Set(g.nodes.map((n) => n.id));
-  const triggers = g.nodes.filter(
-    (n) => isBlockType(n.type) && blockCatalog[n.type].kind === "trigger",
-  );
+  const triggers = g.nodes.filter((n) => isTriggerType(n.type));
   const trigger = triggers[0];
 
   const structural: GraphIssue[] = [
@@ -96,7 +93,7 @@ export const validateGraph = (g: Graph): readonly GraphIssue[] => {
       if (!ids.has(e.source) || !ids.has(e.target))
         return [{ message: `Edge ${e.id} references a missing block` }];
       const src = findNode(g, e.source)!;
-      return isBlockType(src.type) && !blockCatalog[src.type].ports.includes(e.sourcePort)
+      return isBlockType(src.type) && !blockSpecs[src.type].ports.includes(e.sourcePort)
         ? [{ nodeId: src.id, message: `Block has no port "${e.sourcePort}"` }]
         : [];
     }),
@@ -131,6 +128,3 @@ export const validateGraph = (g: Graph): readonly GraphIssue[] => {
   return [...structural, ...unreachable, ...perNode, ...refs];
 };
 
-/** Parses config with defaults applied. Assumes the graph was validated. */
-export const parseConfig = <T extends BlockType>(type: T, config: unknown) =>
-  blockSchemas[type].config.parse(config) as z.infer<(typeof blockSchemas)[T]["config"]>;

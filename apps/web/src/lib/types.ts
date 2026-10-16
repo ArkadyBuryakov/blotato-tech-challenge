@@ -50,7 +50,7 @@ export type RunStep = {
   error?: string | null;
   started_at?: string | null;
   ended_at?: string | null;
-  wait_expires_at?: string | null;
+  expires_at?: string | null;
 };
 
 export type RunDetail = Omit<RunListItem, "counters" | "version_id" | "contact_username"> & {

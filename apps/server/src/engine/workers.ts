@@ -1,12 +1,15 @@
 import type { PgBoss } from "pg-boss";
-import { executeStep, sendWaitRetry } from "./executor";
+import { executeStep } from "./executor";
 import type { EngineDeps } from "./deps";
 import { Q, type JobData } from "./queues";
 import { routeEvent } from "./router";
-import { expireWait } from "./waits";
+import { fireStepTimer, runStepTask } from "./steps";
 import { reconcileComments, refreshTokens } from "../jobs/maintenance";
 
-/** Registers all job handlers. Handlers are thin: decode job → call engine function. */
+/**
+ * Registers all job handlers. Handlers are thin: decode job → call a block-agnostic engine
+ * primitive, which dispatches to the declared block/event handlers.
+ */
 export const startWorkers = async (boss: PgBoss, deps: EngineDeps, opts: { reconciler: boolean }) => {
   const each =
     <N extends keyof JobData>(fn: (data: JobData[N], meta: { isLast: boolean }) => Promise<void>) =>
@@ -17,8 +20,8 @@ export const startWorkers = async (boss: PgBoss, deps: EngineDeps, opts: { recon
   const opt = { includeMetadata: true, localConcurrency: 4 } as const;
   await boss.work(Q.routeEvent, opt, each<typeof Q.routeEvent>((d) => routeEvent(deps, d.eventId)));
   await boss.work(Q.executeStep, opt, each<typeof Q.executeStep>((d, m) => executeStep(deps, d, m)));
-  await boss.work(Q.waitTimeout, opt, each<typeof Q.waitTimeout>((d) => expireWait(deps, d.runId, d.nodeId)));
-  await boss.work(Q.sendWaitRetry, opt, each<typeof Q.sendWaitRetry>((d) => sendWaitRetry(deps, d)));
+  await boss.work(Q.stepTimer, opt, each<typeof Q.stepTimer>((d) => fireStepTimer(deps, d.runId, d.nodeId)));
+  await boss.work(Q.stepTask, opt, each<typeof Q.stepTask>((d) => runStepTask(deps, d)));
   await boss.work(Q.refreshTokens, () => refreshTokens(deps));
   await boss.schedule(Q.refreshTokens, "17 3 * * *");
 

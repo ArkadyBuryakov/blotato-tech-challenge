@@ -1,17 +1,18 @@
 import {
-  commentTriggerOutput,
-  dmTriggerOutput,
   eventContactId,
+  findNode,
   triggerMatches,
   triggerNode,
+  triggerOutput,
   type InboundEvent,
-  type MessageEvent,
 } from "@app/core";
 import { sql } from "kysely";
 import type { DB, Tx } from "../db/client";
+import { handlerFor } from "./blocks";
 import type { EngineDeps } from "./deps";
-import { refreshRunStatus, scheduleNext } from "./runs";
-import { applyReply } from "./waits";
+import { eventHandler, type ContactProfile } from "./events";
+import { lockRun, refreshRunStatus, scheduleNext } from "./runs";
+import { deliverEvent } from "./steps";
 
 /**
  * Ingress: store normalized events in the inbox (deduplicated) and enqueue routing in the same
@@ -39,7 +40,7 @@ export const ingestEvents = async (
   });
 
 /** Remember who interacted with the account (shown in the execution log, used as user_data). */
-const upsertContact = (db: DB | Tx, accountId: string, igsid: string, profile: { username?: string; name?: string } | null) =>
+const upsertContact = (db: DB | Tx, accountId: string, igsid: string, profile: ContactProfile | null) =>
   db
     .insertInto("contacts")
     .values({ ig_account_id: accountId, igsid, username: profile?.username || null, full_name: profile?.name || null })
@@ -53,39 +54,30 @@ const upsertContact = (db: DB | Tx, accountId: string, igsid: string, profile: {
     .execute();
 
 /**
- * Route one inbox event:
- * 1. a DM from someone we are waiting on resumes that conversation (and is not used as a trigger);
- * 2. otherwise every active automation whose trigger matches starts a new run.
+ * Route one inbox event, whatever its kind:
+ * 1. if a suspended step of this contact consumes the event kind, it resumes that step (and is
+ *    not used as a trigger);
+ * 2. otherwise every active automation whose trigger declares this kind and matches starts a run.
  * The whole decision commits atomically with the jobs it enqueues; re-running it is a no-op.
  */
 export const routeEvent = async (deps: EngineDeps, eventId: number): Promise<void> => {
   const head = await deps.db.selectFrom("inbox_events").select(["payload", "processed_at"]).where("id", "=", eventId).executeTakeFirst();
   if (!head || head.processed_at) return;
   const event = head.payload;
+  const contactId = eventContactId(event);
 
-  // Network call outside the transaction; best effort (profile access is not guaranteed).
-  const profile =
-    event.kind === "message"
-      ? await deps.tokens
-          .get(event.accountId)
-          .then((t) => deps.ig.getUserProfile(t, event.senderId))
-          .catch(() => null)
-      : null;
+  // Network call outside the transaction.
+  const profile = await eventHandler(event.kind).profile(deps, event);
 
   await deps.db.transaction().execute(async (trx) => {
     const locked = await trx.selectFrom("inbox_events").select("processed_at").where("id", "=", eventId).forUpdate().executeTakeFirstOrThrow();
     if (locked.processed_at) return;
     const now = deps.now();
     await trx.updateTable("inbox_events").set({ processed_at: now }).where("id", "=", eventId).execute();
+    await upsertContact(trx, event.accountId, contactId, profile);
 
-    if (event.kind === "message") {
-      await upsertContact(trx, event.accountId, event.senderId, profile);
-      if (await resumeWaitingRun(deps, trx, event)) return;
-    }
+    if (await resumeSuspendedStep(deps, trx, event, contactId)) return;
 
-    if (event.kind === "comment") await upsertContact(trx, event.accountId, event.from.id, { username: event.from.username });
-
-    const contactId = eventContactId(event);
     const contact = await trx
       .selectFrom("contacts")
       .select(["username", "full_name"])
@@ -124,10 +116,9 @@ export const routeEvent = async (deps: EngineDeps, eventId: number): Promise<voi
         deps.log.info({ automationId: c.automationId, eventId }, "run not started: duplicate or in-flight run for contact");
         continue;
       }
-      const output = event.kind === "comment" ? commentTriggerOutput(event, user) : dmTriggerOutput(event, user);
       await trx
         .insertInto("run_steps")
-        .values({ run_id: run.id, node_id: trigger.id, status: "succeeded", attempts: 1, output, started_at: now, ended_at: now })
+        .values({ run_id: run.id, node_id: trigger.id, status: "succeeded", attempts: 1, output: triggerOutput(trigger, event, user), started_at: now, ended_at: now })
         .execute();
       await scheduleNext(deps, trx, run.id, c.graph, trigger.id, "out");
       await refreshRunStatus(trx, run.id, now);
@@ -137,21 +128,27 @@ export const routeEvent = async (deps: EngineDeps, eventId: number): Promise<voi
 };
 
 /**
- * Correlation: a DM resumes the most recent waiting step of a run whose contact is the sender.
+ * Correlation: an event resumes the most recently suspended step, in any run of its contact,
+ * whose block consumes that event kind (whatever else the run is doing in parallel branches).
  * If several automations wait on the same person, the latest question gets the answer.
  */
-const resumeWaitingRun = async (deps: EngineDeps, trx: Tx, event: MessageEvent): Promise<boolean> => {
+const resumeSuspendedStep = async (deps: EngineDeps, trx: Tx, event: InboundEvent, contactId: string): Promise<boolean> => {
   const waiting = await trx
-    .selectFrom("runs as r")
-    .innerJoin("run_steps as s", "s.run_id", "r.id")
-    .select(["r.id", "r.version_id", "s.node_id"])
+    .selectFrom("run_steps as s")
+    .innerJoin("runs as r", "r.id", "s.run_id")
+    .innerJoin("automation_versions as v", "v.id", "r.version_id")
+    .select(["s.run_id", "s.node_id", "v.graph"])
     .where("r.ig_account_id", "=", event.accountId)
-    .where("r.contact_id", "=", event.senderId)
-    .where("r.status", "=", "waiting")
+    .where("r.contact_id", "=", contactId)
     .where("s.status", "=", "waiting")
     .orderBy("s.started_at", "desc")
-    .limit(1)
-    .forUpdate("r")
-    .executeTakeFirst();
-  return waiting ? applyReply(deps, trx, waiting, waiting.node_id, event) : false;
+    .execute();
+  for (const w of waiting) {
+    const type = findNode(w.graph, w.node_id)?.type;
+    if (!type || !handlerFor(type)?.on?.[event.kind]) continue;
+    const run = await lockRun(trx, w.run_id);
+    // Re-checked under the lock: the step may have moved on since the select.
+    if (run && (await deliverEvent({ deps, trx, run, graph: w.graph, nodeId: w.node_id }, event))) return true;
+  }
+  return false;
 };

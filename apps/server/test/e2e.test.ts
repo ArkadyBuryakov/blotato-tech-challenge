@@ -4,13 +4,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadConfig } from "../src/config";
 import { createDb, createPool } from "../src/db/client";
 import { migrate } from "../src/db/migrations";
-import { expireWait } from "../src/engine/waits";
 import { startWorkers } from "../src/engine/workers";
 import { buildApp } from "../src/http/app";
 import type { InstagramApi, Recipient } from "../src/instagram/client";
 import { createMockInstagramApi, MOCK_ACCOUNT } from "../src/instagram/mock";
 import { normalizeWebhook } from "@app/core";
 import { createRuntime, type Runtime } from "../src/runtime";
+import { fireStepTimer } from "../src/engine/steps";
 
 /**
  * End-to-end against a real Postgres (docker compose up) with the mock Instagram API:
@@ -28,6 +28,8 @@ const cfg = loadConfig({
 
 type Sent = { kind: "dm"; recipient: Recipient; text: string } | { kind: "reply"; commentId: string; text: string };
 const sent: Sent[] = [];
+/** Comment replies containing "[hold]" block until released, keeping their step `running`. */
+let held: Promise<void> = Promise.resolve();
 const mock = createMockInstagramApi(() => {});
 const recordingIg: InstagramApi = {
   ...mock,
@@ -37,6 +39,7 @@ const recordingIg: InstagramApi = {
     return r;
   },
   replyToComment: async (t, commentId, text) => {
+    if (text.includes("[hold]")) await held;
     sent.push({ kind: "reply", commentId, text });
     return mock.replyToComment(t, commentId, text);
   },
@@ -205,8 +208,8 @@ describe("comment 'pricing' → reply → DM → wait for email → DM link", ()
     sent.length = 0;
     await comment("c3", "pricing", "u2");
     const run = await waitFor(() => rt.db.selectFrom("runs").selectAll().where("contact_id", "=", "u2").where("status", "=", "waiting").executeTakeFirst());
-    await rt.db.updateTable("run_steps").set({ wait_expires_at: new Date(Date.now() - 1000) }).where("run_id", "=", run.id).where("node_id", "=", "wait").execute();
-    await expireWait(rt.deps, run.id, "wait");
+    await rt.db.updateTable("run_steps").set({ expires_at: new Date(Date.now() - 1000) }).where("run_id", "=", run.id).where("node_id", "=", "wait").execute();
+    await fireStepTimer(rt.deps, run.id, "wait");
     const after = await rt.db.selectFrom("runs").select("status").where("id", "=", run.id).executeTakeFirstOrThrow();
     expect(after.status).toBe("succeeded"); // no block on the timeout port: run just ends
     const detail = await api("GET", `/api/runs/${run.id}`);
@@ -289,5 +292,45 @@ describe("instagram rules are enforced by (mock) instagram, not by the app", () 
     await simulate({ kind: "comment", text: "cold", mediaId: "m1", fromId: "u8", username: "lee" });
     const steps = await stepsOf(g.body.id);
     expect(steps.dm).toMatchObject({ status: "failed", error: "(#10) This message is sent outside of allowed window." });
+  });
+});
+
+describe("suspended steps", () => {
+  const simulate = (body: object) => api("POST", "/api/dev/simulate", body);
+
+  it("a reply resumes the wait while a parallel branch is still running", async () => {
+    let release = () => {};
+    held = new Promise((r) => (release = r));
+    const a = await api("POST", "/api/automations", { name: "parallel" });
+    const graph = {
+      nodes: [
+        { id: "trigger", type: "trigger.comment", position: { x: 0, y: 0 }, config: { publications: { mode: "all" }, keywords: ["parallel"] }, inputs: {} },
+        { id: "reply", type: "action.comment_reply", position: { x: 0, y: 100 }, config: {}, inputs: { comment_id: "{{trigger.comment_data.comment_id}}", message_text: "[hold] ok" } },
+        { id: "ask", type: "action.send_dm", position: { x: 200, y: 100 }, config: {}, inputs: { user_id: "{{trigger.user_data.user_id}}", message_text: "Anything to add?" } },
+        { id: "wait", type: "control.wait_for_reply", position: { x: 200, y: 200 }, config: {}, inputs: { user_id: "{{trigger.user_data.user_id}}" } },
+      ],
+      edges: [
+        { id: "e1", source: "trigger", sourcePort: "out", target: "reply" },
+        { id: "e2", source: "trigger", sourcePort: "out", target: "ask" },
+        { id: "e3", source: "ask", sourcePort: "out", target: "wait" },
+      ],
+    };
+    expect((await api("POST", `/api/automations/${a.body.id}/versions`, { graph, activate: true })).status).toBe(200);
+    await api("PATCH", `/api/automations/${a.body.id}`, { status: "active" });
+
+    await simulate({ kind: "comment", text: "parallel", mediaId: "m1", fromId: "u3", username: "ann" });
+    const waiting = await waitFor(async () => {
+      const run = await rt.db.selectFrom("runs").selectAll().where("automation_id", "=", a.body.id).executeTakeFirst();
+      const steps = run ? await runSteps(run.id) : [];
+      return run && steps.some((s) => s.node_id === "wait" && s.status === "waiting") && run;
+    });
+    expect(waiting.status).toBe("running"); // the held reply keeps the run running
+
+    await simulate({ kind: "message", text: "all good", fromId: "u3" });
+    const wait = await waitFor(async () => (await runSteps(waiting.id)).find((s) => s.node_id === "wait" && s.status === "succeeded"));
+    expect(wait.output).toMatchObject({ message_text: "all good" });
+
+    release();
+    await waitFor(() => rt.db.selectFrom("runs").select("status").where("id", "=", waiting.id).where("status", "=", "succeeded").executeTakeFirst());
   });
 });

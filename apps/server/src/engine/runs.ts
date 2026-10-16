@@ -1,6 +1,6 @@
 import { deriveRunStatus, nextNodes, type Graph, type Scope } from "@app/core";
 import { sql } from "kysely";
-import type { Tx } from "../db/client";
+import type { DB, Tx } from "../db/client";
 import type { EngineDeps } from "./deps";
 
 /**
@@ -12,7 +12,7 @@ import type { EngineDeps } from "./deps";
 export const lockRun = (trx: Tx, runId: string) =>
   trx.selectFrom("runs").selectAll().where("id", "=", runId).forUpdate().executeTakeFirst();
 
-export const loadGraph = async (trx: Tx, versionId: string): Promise<Graph> =>
+export const loadGraph = async (trx: Tx | DB, versionId: string): Promise<Graph> =>
   (await trx.selectFrom("automation_versions").select("graph").where("id", "=", versionId).executeTakeFirstOrThrow()).graph;
 
 /** Outputs of finished steps, keyed by node id: the scope for `{{node.path}}` templates. */

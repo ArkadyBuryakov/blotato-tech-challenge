@@ -5,8 +5,8 @@ import { bossDb } from "../db/client";
 export const Q = {
   routeEvent: "route-event",
   executeStep: "execute-step",
-  waitTimeout: "wait-timeout",
-  sendWaitRetry: "send-wait-retry",
+  stepTimer: "step-timer",
+  stepTask: "step-task",
   refreshTokens: "refresh-tokens",
   reconcileComments: "reconcile-comments",
 } as const;
@@ -14,8 +14,10 @@ export const Q = {
 export type JobData = {
   [Q.routeEvent]: { eventId: number };
   [Q.executeStep]: { runId: string; nodeId: string };
-  [Q.waitTimeout]: { runId: string; nodeId: string };
-  [Q.sendWaitRetry]: { runId: string; nodeId: string; retry: number };
+  /** A suspended step's deadline (see BlockHandler.onTimer). */
+  [Q.stepTimer]: { runId: string; nodeId: string };
+  /** A follow-up side effect a block requested (see BlockHandler.tasks). */
+  [Q.stepTask]: { runId: string; nodeId: string; task: string; data: Record<string, unknown> };
   [Q.refreshTokens]: Record<string, never>;
   [Q.reconcileComments]: Record<string, never>;
 };
@@ -27,8 +29,8 @@ const retrying = { retryLimit: 8, retryDelay: 5, retryBackoff: true, retryDelayM
 const queues: readonly Queue[] = [
   { name: Q.routeEvent, ...retrying },
   { name: Q.executeStep, ...retrying, expireInSeconds: 120 },
-  { name: Q.waitTimeout, ...retrying },
-  { name: Q.sendWaitRetry, ...retrying, expireInSeconds: 120 },
+  { name: Q.stepTimer, ...retrying },
+  { name: Q.stepTask, ...retrying, expireInSeconds: 120 },
   // Crons: one at a time is enough.
   { name: Q.refreshTokens, policy: "singleton", retryLimit: 2 },
   { name: Q.reconcileComments, policy: "singleton", retryLimit: 0 },
@@ -42,8 +44,12 @@ export const createBoss = (connectionString: string) =>
     ssl: /localhost|127\.0\.0\.1/.test(connectionString) ? undefined : { rejectUnauthorized: false },
   });
 
+/** Queues of earlier releases, replaced by the generic step-timer / step-task queues. */
+const obsolete = ["wait-timeout", "send-wait-retry"];
+
 export const ensureQueues = async (boss: PgBoss) => {
   const existing = new Set((await boss.getQueues()).map((q) => q.name));
+  for (const name of obsolete.filter((n) => existing.has(n))) await boss.deleteQueue(name);
   for (const { name, policy, ...opts } of queues)
     // Policy is fixed at creation; other options are kept in sync on every release.
     await (existing.has(name) ? boss.updateQueue(name, opts) : boss.createQueue(name, { policy, ...opts }));

@@ -11,7 +11,7 @@ import {
   type Connection,
   type Edge,
 } from "@xyflow/react";
-import { blockCatalog, blockTypes, validateGraph, type BlockType, type Graph } from "@app/core";
+import { blockCatalog, blockDefaults, blockTypes, validateGraph, type BlockType, type Graph } from "@app/core";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -22,17 +22,9 @@ import { api, ApiError, useApi } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 import type { AutomationDetail } from "@/lib/types";
 
-const defaults: Record<BlockType, { config: Record<string, unknown>; inputs: Record<string, string> }> = {
-  "trigger.comment": { config: { publications: { mode: "all" }, keywords: [] }, inputs: {} },
-  "trigger.dm": { config: {}, inputs: {} },
-  "action.send_dm": { config: {}, inputs: { user_id: "", message_text: "" } },
-  "action.comment_reply": { config: {}, inputs: { comment_id: "", message_text: "" } },
-  "control.wait_for_reply": { config: { expect: "any", timeoutHours: 23, retryMessage: "", maxRetries: 2 }, inputs: { user_id: "" } },
-};
-
 /** Sensible default references to the trigger's outputs, so new blocks are usually valid right away. */
 const prefill = (type: BlockType, trigger?: { id: string; type: string }) => {
-  const inputs = { ...defaults[type].inputs };
+  const inputs = blockDefaults(type).inputs;
   if (!trigger) return inputs;
   const userRef = trigger.type === "trigger.comment" ? `{{${trigger.id}.user_data.user_id}}` : `{{${trigger.id}.message_data.user_id}}`;
   if ("user_id" in inputs) inputs.user_id = userRef;
@@ -87,7 +79,7 @@ function Editor({ automation, reload }: { automation: AutomationDetail; reload: 
     const def = blockCatalog[type];
     if (def.kind === "trigger" && trigger) {
       // Swap the trigger type in place: there is exactly one trigger per automation.
-      setNodes((ns) => ns.map((n) => (n.id === trigger.id ? { ...n, data: { block: { ...n.data.block, type, ...defaults[type] } } } : n)));
+      setNodes((ns) => ns.map((n) => (n.id === trigger.id ? { ...n, data: { block: { ...n.data.block, type, ...blockDefaults(type) } } } : n)));
       touch();
       return;
     }
@@ -97,7 +89,7 @@ function Editor({ automation, reload }: { automation: AutomationDetail; reload: 
     const id = `${prefix}_${i}`;
     const parent = nodes.find((n) => n.id === selected) ?? nodes[nodes.length - 1];
     const position = parent ? { x: parent.position.x, y: parent.position.y + 150 } : { x: 0, y: 0 };
-    setNodes((ns) => [...ns, { id, type: "block", position, data: { block: { id, type, config: defaults[type].config, inputs: prefill(type, trigger) } } }]);
+    setNodes((ns) => [...ns, { id, type: "block", position, data: { block: { id, type, config: blockDefaults(type).config, inputs: prefill(type, trigger) } } }]);
     // Auto-connect from the selected block's first free port.
     if (parent) {
       const ports = blockCatalog[parent.data.block.type as BlockType]?.ports ?? ["out"];

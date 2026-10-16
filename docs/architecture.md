@@ -19,8 +19,21 @@ How general the system is was a judgment call. I picked these options:
 | Versioning | **Immutable versions**. Runs pin the version they started with | Editing a live automation must never change in-flight conversations. Rollback is just "make vN active". |
 | Execution engine | **Postgres-backed state machine + pg-boss** | One datastore. State changes and job enqueues commit in one transaction. Easy to operate on Heroku. Temporal/Step Functions would add infrastructure without adding much at this scale (see §7). |
 
-The block catalog (`packages/core/src/blocks.ts`) is the only place block types are defined. The
-API, the worker and the editor all import it, so validation, execution and UI cannot drift apart.
+Blocks and event kinds are **declared**, and the engine only dispatches on the declarations:
+
+* **Block spec** (`packages/core/src/blocks/<block>.ts`, `defineBlock`): schemas, ports, outputs,
+  editor metadata and, for triggers, `trigger: { on: <event kind>, matches, output }`. The API, the
+  worker and the editor all import the registry (`blockSpecs`), so validation, execution and UI
+  cannot drift apart. `BlockType` is derived from the registry.
+* **Block handler** (`apps/server/src/engine/blocks/<block>.ts`): the runtime half of every
+  non-trigger block (see §4.1). The handler registry `satisfies` a type built from the specs, so a
+  block without a handler does not compile.
+* **Event spec** (`packages/core/src/events/<kind>.ts`, `defineEvent`): how the kind is extracted
+  from a webhook entry and which contact it is about. Its server half (`engine/events.ts`) fetches
+  the contact profile.
+
+Adding a block means adding a spec file and a handler file and listing each in its registry. No
+engine code changes.
 
 Block catalog:
 
@@ -43,7 +56,7 @@ flowchart LR
   end
   subgraph Heroku app
     WEB["web dyno (Fastify)<br/>static Next.js export<br/>/api/* REST · BetterAuth<br/>/api/webhooks/instagram"]
-    WRK["worker dyno (pg-boss)<br/>route-event · execute-step<br/>wait-timeout · crons"]
+    WRK["worker dyno (pg-boss)<br/>route-event · execute-step<br/>step-timer · step-task · crons"]
     REL[release phase<br/>migrations]
   end
   PG[(Postgres<br/>domain tables + pgboss schema)]
@@ -123,34 +136,46 @@ sequenceDiagram
   W->>W: verify HMAC, normalize, drop echoes/own comments
   W->>DB: tx{ INSERT inbox_events ON CONFLICT DO NOTHING#59; enqueue route-event }
   W-->>M: 200 (no Graph API calls in the request)
-  R->>DB: tx{ lock event#59; DM from a waited-on contact? resume : match triggers → INSERT run, trigger step, pending children#59; enqueue execute-step }
+  R->>DB: tx{ lock event#59; suspended step of the contact consumes it? resume : match triggers → INSERT run, trigger step, pending children#59; enqueue execute-step }
   S->>DB: tx1{ lock run#59; step pending? render inputs#59; mark running#59; choose recipient }
   S->>IG: send (outside any transaction)
   S->>DB: tx2{ lock run#59; store output#59; INSERT children pending#59; enqueue#59; recompute run status }
 ```
 
 1. **Ingress** (`http/webhooks.ts`, `engine/router.ts#ingestEvents`). Verify the signature over
-   the raw body, normalize (`core/events.ts`), and insert into the inbox **and** enqueue
+   the raw body, normalize (each declared event kind extracts itself, `core/events/`), and insert into the inbox **and** enqueue
    `route-event` in the same transaction. pg-boss accepts our transaction as its `db`, so this is
    a transactional outbox: an event is stored iff its routing job exists. Duplicates from Meta
    retries hit the unique key and are silently dropped.
-2. **Routing** (`routeEvent`). For a DM, first upsert the contact, then look
-   for a **waiting run of the same contact**. If found, the message is applied to the most recent
-   waiting step and **consumed**: it does not also fire DM triggers, because it is an answer, not a
-   new conversation. Otherwise every active automation whose trigger matches gets a run. The trigger
-   step is written as succeeded with the trigger outputs, its children become `pending` and are
-   enqueued.
-3. **Steps** (`executor.ts`) run in three phases, so a database transaction is never held during a
-   network call:
+2. **Routing** (`routeEvent`). Upsert the contact, then look for a **waiting step of the same
+   contact whose handler consumes this event kind** (`on.message` for Wait for reply), in any run
+   of that contact, even one whose other branches are still running. If its handler takes the event,
+   the event is **consumed**: it does not also fire triggers, because it is an answer, not a new
+   conversation. Otherwise every active automation whose trigger declares this event kind and
+   matches gets a run. The trigger step is written as succeeded with the trigger's declared output,
+   its children become `pending` and are enqueued.
+3. **Steps** (`executor.ts`) are block-agnostic: the block's handler decides, the engine persists.
+   They run in three phases, so a database transaction is never held during a network call:
    * *claim* (tx): lock the run row, check idempotency, render `{{…}}` inputs from finished steps,
-     decide how to address the DM, mark `running`;
-   * *effect*: call Instagram;
+     call `handler.start`, which returns one of:
+     * `complete(port, output)`
+     * `fail(error)`
+     * `suspend(until, state)`
+     * `effect(plan)`: the step is marked `running` (Send a DM decides here how to address the DM);
+   * *effect*: `handler.perform(plan)` calls Instagram;
    * *settle* (tx): write the output/error, create and enqueue the children for the port taken,
      recompute the run status.
-4. **Wait for reply**: the step becomes `waiting` with `wait_expires_at`, and a `wait-timeout` job
-   is scheduled with `startAfter`. A reply and a timeout race safely (§5). On a reply, the run
-   continues through `received`; on expiry, through `timeout`. An invalid reply (no email) sends
-   `retryMessage` up to `maxRetries` times, then waits silently until the timeout.
+4. **Suspended steps** (Wait for reply is the one today): the step becomes `waiting` with
+   `expires_at` and block-private `state`, and a `step-timer` job is scheduled with `startAfter`.
+   While it waits:
+   * a matching event goes to `handler.on[kind]`, which returns `complete`, `stay` (new state,
+     optional follow-up `step-task` jobs) or `ignore`;
+   * the deadline goes to `handler.onTimer`.
+
+   An event and the deadline race safely (§5). For Wait for reply:
+   * a valid reply continues through `received`, the deadline through `timeout`;
+   * an invalid reply (no email) is consumed, and a `send-retry` task re-asks with `retryMessage`
+     up to `maxRetries` times; after that the step waits silently until the deadline.
 5. **Run status** is *derived* from the step statuses (`deriveRunStatus`): any
    pending/running → `running`; else any waiting → `waiting`; else any failed → `failed`; else
    `succeeded`. Since it is recomputed under the run lock after every transition, it cannot drift
@@ -195,10 +220,10 @@ send_link                   succeeded   "Here is the link … bob@x.io"     (rec
 | Worker crash mid-step | pg-boss expiry/retry re-runs the job. `run_steps` status makes the claim idempotent: only `pending`, or `running` from a crashed attempt, executes |
 | Duplicate side effects | **At-least-once.** The Graph API has no idempotency keys, so a crash between "sent" and "settled" can resend once. The window is a few ms. A resent private reply is rejected by Instagram itself |
 | Transient vs permanent API errors | `MetaApiError.transient` (5xx, throttling codes 1/2/4/17/32/341/613, network) → retried with exponential backoff, up to 8 times. Permanent errors (4xx, including Instagram's messaging-rule rejections) or the last attempt → step `failed` with Instagram's message, run `failed` |
-| Concurrent jobs of the same run (fan-out branches, reply vs timeout) | Every transition locks the run row (`SELECT … FOR UPDATE`). Conditional updates (`WHERE status = 'waiting'`) make the reply/timeout race single-winner |
+| Concurrent jobs of the same run (fan-out branches, reply vs timeout) | Every transition locks the run row (`SELECT … FOR UPDATE`), and a suspended step's status is re-checked under that lock, so the reply/timeout race has a single winner |
 | Same person comments "pricing" 3 times | Partial unique index: one in-flight run per (automation, contact). Later comments are recorded but don't start new runs, so no spam |
 | Several automations waiting on one person | The reply goes to the most recently started waiting step (the latest question asked) |
-| Reply arrives before the wait step starts | At wait start, the executor replays the contact's DMs received since the previous step started (`catchUpEarlyReplies`) |
+| Reply arrives before the wait step starts | When a step suspends, the executor replays the contact's events of the kinds its handler consumes, received since the previous step started (`replayEarlyEvents`) |
 | Editing a live automation | Versions are immutable and runs pin `version_id` |
 | Loops (our reply triggers our automation) | Normalizer drops `is_echo` messages and comments authored by the account itself |
 | Webhook spoofing | HMAC-SHA256 over the raw body with the app secret, constant-time compare |

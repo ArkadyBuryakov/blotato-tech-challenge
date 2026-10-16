@@ -80,7 +80,7 @@ function RunDetailView({ runId }: { runId: string }) {
                     <td>{s.attempts ?? "—"}</td>
                     <td className="muted">{fmtDate(s.started_at)}</td>
                     <td className="muted">
-                      {s.status === "waiting" && s.wait_expires_at ? `until ${fmtDate(s.wait_expires_at)}` : s.started_at ? fmtDuration(s.started_at, s.ended_at ?? null) : "—"}
+                      {s.status === "waiting" && s.expires_at ? `until ${fmtDate(s.expires_at)}` : s.started_at ? fmtDuration(s.started_at, s.ended_at ?? null) : "—"}
                     </td>
                     <td className="small">
                       {s.error ? <span className="error-text">{s.error}</span> : <span className="muted">{focus === s.node_id ? "hide" : "show"}</span>}

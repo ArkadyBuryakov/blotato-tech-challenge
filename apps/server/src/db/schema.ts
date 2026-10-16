@@ -85,8 +85,10 @@ export interface RunStepTable {
   input: Json<Record<string, unknown>> | null;
   output: Json<Record<string, unknown>> | null;
   error: string | null;
-  wait_expires_at: Timestamp | null;
-  wait_retries: Generated<number>;
+  /** Deadline of a suspended (`waiting`) step. */
+  expires_at: Timestamp | null;
+  /** Block-private state of a suspended step (e.g. retries used by "Wait for reply"). */
+  state: JSONColumnType<Record<string, unknown>, Record<string, unknown> | undefined, Record<string, unknown>>;
   started_at: Timestamp | null;
   ended_at: Timestamp | null;
   created_at: Generated<Date>;
