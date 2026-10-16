@@ -10,6 +10,7 @@ That flow ships as a template, but underneath it is a general **graph of trigger
 blocks**. Versions are immutable, every run is logged, and all of it runs on Postgres + pg-boss.
 
 **Live demo:** [blotato-demo.buryakov.pro](https://blotato-demo.buryakov.pro)
+Demo video: [Blotato Take Home.mp4](https://drive.google.com/file/d/1SZCzKfM5s9p67fgevLkt1ziX4mfbpv--/view?usp=sharing)
 
 > **Note:** the app is not verified by Meta, so comment webhooks may not be delivered. In that case
 > new comments are picked up by the comment reconciler instead, which can delay a run by up to
