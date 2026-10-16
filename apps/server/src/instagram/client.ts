@@ -21,7 +21,8 @@ export type RemoteComment = {
 };
 
 export type InstagramApi = {
-  readonly sendMessage: (token: string, recipient: Recipient, text: string) => Promise<{ messageId: string }>;
+  /** `recipientId` is the IGSID Instagram delivered to (for a private reply: the comment's author). */
+  readonly sendMessage: (token: string, recipient: Recipient, text: string) => Promise<{ messageId: string; recipientId: string }>;
   readonly replyToComment: (token: string, commentId: string, text: string) => Promise<{ replyId: string }>;
   readonly listMedia: (token: string) => Promise<readonly Media[]>;
   readonly listComments: (token: string, mediaId: string) => Promise<readonly RemoteComment[]>;
@@ -81,8 +82,8 @@ export const createLiveInstagramApi = (opts: { version: string }): InstagramApi 
 
   return {
     sendMessage: async (token, recipient, text) => {
-      const r = await call<{ message_id: string }>(token, "POST", "/me/messages", {}, { recipient, message: { text } });
-      return { messageId: r.message_id };
+      const r = await call<{ message_id: string; recipient_id: string }>(token, "POST", "/me/messages", {}, { recipient, message: { text } });
+      return { messageId: r.message_id, recipientId: r.recipient_id };
     },
     replyToComment: async (token, commentId, text) => {
       const r = await call<{ id: string }>(token, "POST", `/${commentId}/replies`, { message: text });

@@ -195,6 +195,7 @@ describe("comment 'pricing' → reply → DM → wait for email → DM link", ()
     expect(Object.fromEntries(steps.map((s) => [s.node_id, s.status]))).toEqual({
       trigger: "succeeded", reply: "succeeded", ask: "succeeded", wait: "succeeded", send_link: "succeeded",
     });
+    expect(steps.find((s) => s.node_id === "ask")!.output).toMatchObject({ comment_id: "c1", user_id: "u1" });
   });
 
   it("exposes runs with per-status counters and a detailed view", async () => {
@@ -282,7 +283,7 @@ describe("instagram rules are enforced by (mock) instagram, not by the app", () 
     const graph = {
       nodes: [
         { id: "trigger", type: "trigger.comment", position: { x: 0, y: 0 }, config: { publications: { mode: "all" }, keywords: ["cold"] }, inputs: {} },
-        // Addressed to a different user than the commenter: no private reply possible.
+        // A plain DM (not a private reply) to someone who never messaged the account.
         { id: "dm", type: "action.send_dm", position: { x: 0, y: 100 }, config: {}, inputs: { user_id: "stranger", message_text: "hi" } },
       ],
       edges: [{ id: "e", source: "trigger", sourcePort: "out", target: "dm" }],
@@ -306,7 +307,7 @@ describe("suspended steps", () => {
       nodes: [
         { id: "trigger", type: "trigger.comment", position: { x: 0, y: 0 }, config: { publications: { mode: "all" }, keywords: ["parallel"] }, inputs: {} },
         { id: "reply", type: "action.comment_reply", position: { x: 0, y: 100 }, config: {}, inputs: { comment_id: "{{trigger.comment_data.comment_id}}", message_text: "[hold] ok" } },
-        { id: "ask", type: "action.send_dm", position: { x: 200, y: 100 }, config: {}, inputs: { user_id: "{{trigger.user_data.user_id}}", message_text: "Anything to add?" } },
+        { id: "ask", type: "action.private_reply", position: { x: 200, y: 100 }, config: {}, inputs: { comment_id: "{{trigger.comment_data.comment_id}}", message_text: "Anything to add?" } },
         { id: "wait", type: "control.wait_for_reply", position: { x: 200, y: 200 }, config: {}, inputs: { user_id: "{{trigger.user_data.user_id}}" } },
       ],
       edges: [

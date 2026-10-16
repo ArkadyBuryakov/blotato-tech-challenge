@@ -6,12 +6,12 @@ import { commentReply } from "./comment-reply";
 import { commentTrigger } from "./comment-trigger";
 import type { BlockDefinition, UserData } from "./define";
 import { dmTrigger } from "./dm-trigger";
+import { privateReply } from "./private-reply";
 import { sendDm } from "./send-dm";
 import { waitForReply } from "./wait-for-reply";
 
 export * from "./define";
 export { publicationsSchema, type Publications } from "./comment-trigger";
-export { chooseDelivery, type Delivery } from "./send-dm";
 export { evaluateReply, waitTimeoutMs, type ReplyDecision, type WaitConfig } from "./wait-for-reply";
 
 /**
@@ -19,7 +19,7 @@ export { evaluateReply, waitTimeoutMs, type ReplyDecision, type WaitConfig } fro
  * Add a block by declaring it (`defineBlock`) and listing it here; the server then requires a
  * handler for it (see apps/server/src/engine/blocks).
  */
-export const blockSpecs = registry("type", commentTrigger, dmTrigger, sendDm, commentReply, waitForReply);
+export const blockSpecs = registry("type", commentTrigger, dmTrigger, sendDm, privateReply, commentReply, waitForReply);
 
 type Specs = typeof blockSpecs;
 export type BlockType = keyof Specs;

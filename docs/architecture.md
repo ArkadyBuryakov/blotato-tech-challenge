@@ -42,6 +42,7 @@ Block catalog:
 | New comment | trigger | publications (all / list), keywords | — | `comment_data.{publication_id, comment_id, comment_text}`, `user_data.{user_id, username, full_name}` | out |
 | New DM | trigger | — | — | `message_data.{user_id, message_id, message_type, message_payload}`, `user_data.*` | out |
 | Send a DM | action | — | `user_id`, `message_text` | inputs + `execution_status`, `message_id` | out |
+| Private reply | action | — | `comment_id`, `message_text` | inputs + `execution_status`, `message_id`, `user_id` (the comment's author, from Instagram's response) | out |
 | Reply to comment | action | — | `comment_id`, `message_text` | inputs + `execution_status`, `reply_id` | out |
 | Wait for reply | control | expect, timeoutHours, retryMessage, maxRetries | `user_id` | `message_id`, `message_text`, `email` | received, timeout |
 
@@ -161,7 +162,7 @@ sequenceDiagram
      * `complete(port, output)`
      * `fail(error)`
      * `suspend(until, state)`
-     * `effect(plan)`: the step is marked `running` (Send a DM decides here how to address the DM);
+     * `effect(plan)`: the step is marked `running` (the block builds its Graph API call here);
    * *effect*: `handler.perform(plan)` calls Instagram;
    * *settle* (tx): write the output/error, create and enqueue the children for the port taken,
      recompute the run status.
@@ -190,10 +191,10 @@ comment within 7 days. The app does **not** imitate these rules: there are no wi
 per-comment claims. It makes the call and Instagram decides. A rejection is a permanent Graph API
 error that fails the step with Instagram's own message, visible in the execution log.
 
-The app makes one structural choice, `chooseDelivery` (pure, unit tested): how to *address* a DM.
-In a comment-triggered run, the first DM to the commenter is sent as a private reply
-(`recipient: {comment_id}`), because there is no other way to reach them. Every later DM uses their
-user id (`recipient: {id}`). The choice is recorded in the step input (`delivery`).
+How a DM is addressed is explicit in the graph, as two blocks: **Private reply** sends to a
+comment (`recipient: {comment_id}`) and **Send a DM** sends to a user id (`recipient: {id}`). The
+comment templates open the conversation with a private reply to the triggering comment; later
+DMs, sent once the user has answered, are plain DMs.
 
 In mock mode, the fake Instagram (`apps/server/src/instagram/mock.ts`) enforces these rules
 itself. It learns about comments and DMs from the simulator, so local runs fail exactly where real

@@ -61,10 +61,10 @@ export const automationTemplates: readonly AutomationTemplate[] = [
         },
         {
           id: "ask",
-          type: "action.send_dm",
+          type: "action.private_reply",
           position: at(0, 280),
           config: {},
-          inputs: { user_id: "{{trigger.user_data.user_id}}", message_text: "[[ask_email]]" },
+          inputs: { comment_id: "{{trigger.comment_data.comment_id}}", message_text: "[[ask_email]]" },
         },
         {
           id: "wait",
@@ -125,10 +125,10 @@ export const automationTemplates: readonly AutomationTemplate[] = [
         },
         {
           id: "dm",
-          type: "action.send_dm",
+          type: "action.private_reply",
           position: at(0, 280),
           config: {},
-          inputs: { user_id: "{{trigger.user_data.user_id}}", message_text: "[[dm]]" },
+          inputs: { comment_id: "{{trigger.comment_data.comment_id}}", message_text: "[[dm]]" },
         },
       ],
       edges: [

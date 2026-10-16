@@ -49,18 +49,21 @@ export const createMockInstagramApi = (
       // Lets tests and demos exercise the permanent-failure path.
       if (text.includes("[fail]")) throw new MetaApiError("Mock permanent failure", false, 100);
       const t = now().getTime();
+      let recipientId: string;
       if ("comment_id" in recipient) {
         const c = comments.get(recipient.comment_id);
         if (!c) throw new MetaApiError("(#100) Invalid comment_id", false, 100);
         if (t - c.at > 7 * DAY) throw rejected("Private replies can only be sent within 7 days of the comment");
         if (privateReplied.has(recipient.comment_id)) throw rejected("A private reply has already been sent to this comment");
         privateReplied.add(recipient.comment_id);
+        recipientId = c.fromId;
       } else {
         const last = lastInbound.get(recipient.id);
         if (!last || t - last > DAY) throw rejected("This message is sent outside of allowed window.");
+        recipientId = recipient.id;
       }
       log("mock instagram: send message", { recipient, text });
-      return { messageId: `mock_mid_${randomUUID()}` };
+      return { messageId: `mock_mid_${randomUUID()}`, recipientId };
     },
     replyToComment: async (_t, commentId, text) => {
       log("mock instagram: reply to comment", { commentId, text });

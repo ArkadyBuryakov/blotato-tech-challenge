@@ -1,5 +1,6 @@
 import type { NodeType } from "@app/core";
 import { commentReplyHandler } from "./comment-reply";
+import { privateReplyHandler } from "./private-reply";
 import { sendDmHandler } from "./send-dm";
 import type { BlockHandler } from "./types";
 import { waitForReplyHandler } from "./wait-for-reply";
@@ -12,6 +13,7 @@ export * from "./types";
  */
 const blockHandlers = {
   "action.send_dm": sendDmHandler,
+  "action.private_reply": privateReplyHandler,
   "action.comment_reply": commentReplyHandler,
   "control.wait_for_reply": waitForReplyHandler,
 } satisfies { [T in NodeType]: BlockHandler<T, any, any> };

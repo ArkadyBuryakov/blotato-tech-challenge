@@ -4,7 +4,6 @@ import {
   blockDefaults,
   blockSpecs,
   blockTypes,
-  chooseDelivery,
   deriveRunStatus,
   evaluateReply,
   findTemplate,
@@ -130,14 +129,6 @@ describe("rules", () => {
     expect(evaluateReply(wait, reply("my mail is Bob@Example.com"), 0)).toMatchObject({ kind: "accept", output: { email: "bob@example.com" } });
     expect(evaluateReply(wait, reply("what?"), 0).kind).toBe("retry");
     expect(evaluateReply(wait, reply("what?"), 2).kind).toBe("ignore");
-  });
-
-  it("addresses the commenter by private reply first, then by user id", () => {
-    const sourceComment = { commentId: "c1", fromId: "u" };
-    expect(chooseDelivery({ userId: "u", sourceComment, privateReplySentInRun: false })).toEqual({ kind: "private_reply", commentId: "c1" });
-    expect(chooseDelivery({ userId: "u", sourceComment, privateReplySentInRun: true })).toEqual({ kind: "user", userId: "u" });
-    expect(chooseDelivery({ userId: "other", sourceComment, privateReplySentInRun: false })).toEqual({ kind: "user", userId: "other" });
-    expect(chooseDelivery({ userId: "u", sourceComment: null, privateReplySentInRun: false })).toEqual({ kind: "user", userId: "u" });
   });
 
   it("derives run status and routes by port", () => {
