@@ -334,4 +334,26 @@ describe("suspended steps", () => {
     release();
     await waitFor(() => rt.db.selectFrom("runs").select("status").where("id", "=", waiting.id).where("status", "=", "succeeded").executeTakeFirst());
   });
+
+  it("waits for a reply from a user other than the one who started the run", async () => {
+    const a = await api("POST", "/api/automations", { name: "elsewhere" });
+    const graph = {
+      nodes: [
+        { id: "trigger", type: "trigger.comment", position: { x: 0, y: 0 }, config: { publications: { mode: "all" }, keywords: ["elsewhere"] }, inputs: {} },
+        { id: "wait", type: "control.wait_for_reply", position: { x: 0, y: 100 }, config: {}, inputs: { user_id: "u21" } },
+      ],
+      edges: [{ id: "e1", source: "trigger", sourcePort: "out", target: "wait" }],
+    };
+    expect((await api("POST", `/api/automations/${a.body.id}/versions`, { graph, activate: true })).status).toBe(200);
+    await api("PATCH", `/api/automations/${a.body.id}`, { status: "active" });
+
+    await simulate({ kind: "comment", text: "elsewhere", mediaId: "m1", fromId: "u20", username: "max" });
+    const run = await waitFor(() => rt.db.selectFrom("runs").selectAll().where("automation_id", "=", a.body.id).where("status", "=", "waiting").executeTakeFirst());
+
+    // The commenter's own DM is not what the step waits for.
+    await simulate({ kind: "message", text: "from the commenter", fromId: "u20" });
+    await simulate({ kind: "message", text: "from u21", fromId: "u21" });
+    const wait = await waitFor(async () => (await runSteps(run.id)).find((s) => s.node_id === "wait" && s.status === "succeeded"));
+    expect(wait.output).toMatchObject({ message_text: "from u21" });
+  });
 });

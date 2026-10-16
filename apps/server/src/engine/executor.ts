@@ -1,4 +1,4 @@
-import { eventContactId, findNode, incoming, parseConfig, renderInputs, type BlockConfig, type BlockType, type EventKind, type NodeType } from "@app/core";
+import { findNode, incoming, parseConfig, renderInputs, waitEventKind, waitMatches, type BlockConfig, type BlockType, type GraphNode, type NodeType } from "@app/core";
 import { sql } from "kysely";
 import type { Tx } from "../db/client";
 import { MetaApiError } from "../instagram/client";
@@ -99,7 +99,7 @@ const claimStep = async (deps: EngineDeps, trx: Tx, job: StepJob): Promise<Claim
       return { kind: "done" };
     case "suspend":
       await suspendStep(ref, outcome.until, outcome.state, claimed);
-      await replayEarlyEvents(ref, handler);
+      await replayEarlyEvents(ref, node, input);
       return { kind: "done" };
     case "effect":
       await trx
@@ -115,11 +115,11 @@ const claimStep = async (deps: EngineDeps, trx: Tx, job: StepJob): Promise<Claim
 /**
  * A fast user can answer before this step suspended (the question is sent by the previous
  * step, then this step is enqueued). Such events were routed while nothing was waiting, so
- * offer the ones from the run's contact received since the previous step started, in order.
+ * offer the ones this step matches, received since the previous step started, in order.
  */
-const replayEarlyEvents = async (ref: StepRef, handler: AnyBlockHandler): Promise<void> => {
-  const kinds = Object.keys(handler.on ?? {}) as EventKind[];
-  if (kinds.length === 0) return;
+const replayEarlyEvents = async (ref: StepRef, node: GraphNode, input: Record<string, string>): Promise<void> => {
+  const kind = waitEventKind(node.type);
+  if (!kind) return;
   const parentId = incoming(ref.graph, ref.nodeId)[0]?.source;
   const parent = parentId
     ? await ref.trx.selectFrom("run_steps").select("started_at").where("run_id", "=", ref.run.id).where("node_id", "=", parentId).executeTakeFirst()
@@ -128,12 +128,12 @@ const replayEarlyEvents = async (ref: StepRef, handler: AnyBlockHandler): Promis
     .selectFrom("inbox_events")
     .select("payload")
     .where("ig_account_id", "=", ref.run.ig_account_id)
-    .where("kind", "in", kinds)
+    .where("kind", "=", kind)
     .where("received_at", ">=", parent?.started_at ?? ref.run.started_at)
     .orderBy("id")
     .execute();
   for (const { payload } of early) {
-    if (eventContactId(payload) !== ref.run.contact_id) continue;
+    if (!waitMatches(node, input, payload)) continue;
     await deliverEvent(ref, payload);
     const step = await ref.trx.selectFrom("run_steps").select("status").where("run_id", "=", ref.run.id).where("node_id", "=", ref.nodeId).executeTakeFirstOrThrow();
     if (step.status !== "waiting") break;

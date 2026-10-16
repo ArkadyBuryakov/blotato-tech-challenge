@@ -19,6 +19,7 @@ export const waitForReply = defineBlock({
   outputs: ["message_id", "message_text", "email"],
   ports: ["received", "timeout"],
   inputFields: [{ key: "user_id", label: "Wait for user id" }],
+  wait: { on: "message", matches: ({ input }, e) => e.senderId === input.user_id },
 });
 
 export type WaitConfig = z.output<typeof waitForReply.config>;

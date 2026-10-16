@@ -27,6 +27,8 @@ export type TriggerType = { [T in BlockType]: Specs[T]["kind"] extends "trigger"
 /** Blocks executed as run steps (everything but triggers). */
 export type NodeType = Exclude<BlockType, TriggerType>;
 export type BlockConfig<T extends BlockType> = z.output<Specs[T]["config"]>;
+/** The event kind a waiting step of this block consumes (`never` for blocks that do not wait). */
+export type WaitKind<T extends BlockType> = NonNullable<Specs[T]["wait"]>["on"];
 
 export const blockTypes = Object.keys(blockSpecs) as BlockType[];
 export const blockCatalog: Readonly<Record<BlockType, BlockDefinition>> = blockSpecs;
@@ -67,3 +69,23 @@ export const triggerMatches = (node: GraphNode, event: InboundEvent): boolean =>
 /** Output of a matched trigger's step. */
 export const triggerOutput = (node: GraphNode, event: InboundEvent, user: Partial<UserData>): Record<string, unknown> =>
   triggerOf(node.type)!.output(event, user);
+
+// ---------- waiting steps ----------
+
+/** A wait declaration seen through a runtime event kind. */
+type AnyWait = {
+  readonly on: EventKind;
+  readonly matches: (step: { config: unknown; input: Record<string, string> }, event: InboundEvent) => boolean;
+};
+
+const waitOf = (type: string): AnyWait | undefined =>
+  isBlockType(type) ? (blockSpecs[type].wait as AnyWait | undefined) : undefined;
+
+/** The event kind a waiting step of this block consumes, if it ever waits. */
+export const waitEventKind = (type: string): EventKind | undefined => waitOf(type)?.on;
+
+/** Whether an event is for a waiting step, given the inputs it was rendered with. */
+export const waitMatches = (node: GraphNode, input: Readonly<Record<string, string>>, event: InboundEvent): boolean => {
+  const w = waitOf(node.type);
+  return !!w && w.on === event.kind && w.matches({ config: parseConfig(node.type as BlockType, node.config), input: { ...input } }, event);
+};

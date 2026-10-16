@@ -1,4 +1,4 @@
-import type { BlockConfig, EventKind, EventOf, GraphNode, NodeType, StepStatus } from "@app/core";
+import type { BlockConfig, EventOf, GraphNode, NodeType, StepStatus, WaitKind } from "@app/core";
 import type { Selectable } from "kysely";
 import type { Tx } from "../../db/client";
 import type { RunTable } from "../../db/schema";
@@ -61,12 +61,15 @@ export type BlockHandler<T extends NodeType, S extends StepState = StepState, P 
   perform?(deps: EngineDeps, plan: P, run: Run): Promise<Record<string, unknown>>;
   /** Port a successful effect continues through (default `out`). */
   readonly effectPort?: string;
-  /** Events a suspended step consumes. Correlated by the run's contact (route-event). */
-  readonly on?: { readonly [K in EventKind]?: (ctx: TxStepCtx<T, S>, event: EventOf<K>) => Promise<Resume<S>> };
   /** The suspension deadline passed (step-timer). */
   onTimer?(ctx: TxStepCtx<T, S>): Promise<Resume<S>>;
   /** Follow-up side effects requested through `Resume.tasks` (step-task), outside any transaction. */
   readonly tasks?: {
     readonly [name: string]: (ctx: StepCtx<T, S> & { readonly status: StepStatus }, data: Record<string, unknown>) => Promise<void>;
   };
-};
+} & ([WaitKind<T>] extends [never]
+  ? { readonly on?: never }
+  : {
+      /** Reaction to an event the block's `wait.matches` (core) routed to this suspended step. */
+      on(ctx: TxStepCtx<T, S>, event: EventOf<WaitKind<T>>): Promise<Resume<S>>;
+    });

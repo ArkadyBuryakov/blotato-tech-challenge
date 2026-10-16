@@ -71,7 +71,7 @@ const loadSuspended = async (
 /** Offer an event to a suspended step. Returns whether its block consumed it. */
 export const deliverEvent = async (ref: StepRef, event: InboundEvent): Promise<boolean> => {
   const s = await loadSuspended(ref);
-  const on = s?.handler.on?.[event.kind] as ((ctx: TxStepCtx<NodeType, StepState>, e: InboundEvent) => Promise<Resume<StepState>>) | undefined;
+  const on = s?.handler.on as ((ctx: TxStepCtx<NodeType, StepState>, e: InboundEvent) => Promise<Resume<StepState>>) | undefined;
   if (!s || !on) return false;
   const consumed = await applyResume(ref, await on(s.ctx, event));
   if (consumed) ref.deps.log.info({ runId: ref.run.id, nodeId: ref.nodeId, event: event.externalId }, "event applied to suspended step");

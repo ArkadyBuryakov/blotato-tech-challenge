@@ -15,6 +15,8 @@ import {
   renderTemplate,
   triggerMatches,
   validateGraph,
+  waitEventKind,
+  waitMatches,
   type Graph,
   type MessageEvent,
 } from "../src";
@@ -122,6 +124,14 @@ describe("rules", () => {
   const reply = (text: string): MessageEvent => ({
     kind: "message", accountId: "a", externalId: "x", messageId: "mid", senderId: "u",
     text, messageType: "text", payload: { text }, occurredAt: new Date().toISOString(),
+  });
+
+  it("routes an event to a waiting step only when the block matches it", () => {
+    const wait = pricingGraph().nodes.find((n) => n.id === "wait")!;
+    expect(waitEventKind(wait.type)).toBe("message");
+    expect(waitEventKind("action.send_dm")).toBeUndefined();
+    expect(waitMatches(wait, { user_id: "u" }, reply("hi"))).toBe(true);
+    expect(waitMatches(wait, { user_id: "someone-else" }, reply("hi"))).toBe(false);
   });
 
   it("waits for a valid email, re-asking a limited number of times", () => {

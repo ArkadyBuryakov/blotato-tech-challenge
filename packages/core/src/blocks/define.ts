@@ -10,6 +10,7 @@ import type { EventKind, EventOf } from "../events";
  * - `inputs` are templated strings (`{{nodeId.path}}`) resolved at run time from upstream outputs.
  * - `outputs` lists the variables a block exposes to downstream blocks.
  * - `ports` are the named outgoing connection points (most blocks have a single `out`).
+ * - `wait` (blocks that suspend) declares which events a waiting step of the block consumes.
  */
 
 export type BlockKind = "trigger" | "action" | "control";
@@ -22,6 +23,13 @@ export type TriggerSpec<C, K extends EventKind = EventKind> = {
   readonly matches: (config: C, event: EventOf<K>) => boolean;
   /** Output of the trigger step: the variables the whole run can reference. */
   readonly output: (event: EventOf<K>, user: Partial<UserData>) => Record<string, unknown>;
+};
+
+export type WaitSpec<C, I, K extends EventKind = EventKind> = {
+  /** The event kind a waiting step consumes. */
+  readonly on: K;
+  /** Whether the event is for this waiting step, judged from its config and rendered inputs. */
+  readonly matches: (step: { readonly config: C; readonly input: I }, event: EventOf<K>) => boolean;
 };
 
 /** Editor-facing part of a block (no schemas): what the web app renders. */
@@ -42,6 +50,7 @@ export type BlockSpec<
   K extends BlockKind = BlockKind,
   C extends z.ZodType = z.ZodType,
   I extends z.ZodType = z.ZodType,
+  W extends EventKind = never,
 > = BlockDefinition & {
   readonly type: T;
   readonly kind: K;
@@ -51,11 +60,13 @@ export type BlockSpec<
   readonly defaultConfig?: z.input<C>;
   /** Present exactly on `kind: "trigger"` blocks. */
   readonly trigger?: { [E in EventKind]: TriggerSpec<z.output<C>, E> }[EventKind];
+  /** Present on blocks whose handler suspends; `W` is the event kind it waits for. */
+  readonly wait?: WaitSpec<z.output<C>, z.output<I>, W>;
 };
 
-export const defineBlock = <T extends string, K extends BlockKind, C extends z.ZodType, I extends z.ZodType>(
-  spec: BlockSpec<T, K, C, I>,
-): BlockSpec<T, K, C, I> => spec;
+export const defineBlock = <T extends string, K extends BlockKind, C extends z.ZodType, I extends z.ZodType, W extends EventKind = never>(
+  spec: BlockSpec<T, K, C, I, W>,
+): BlockSpec<T, K, C, I, W> => spec;
 
 export const templated = (label: string) => z.string().trim().min(1, `${label} is required`);
 

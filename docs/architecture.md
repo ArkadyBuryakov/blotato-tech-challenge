@@ -22,9 +22,10 @@ How general the system is was a judgment call. I picked these options:
 Blocks and event kinds are **declared**, and the engine only dispatches on the declarations:
 
 * **Block spec** (`packages/core/src/blocks/<block>.ts`, `defineBlock`): schemas, ports, outputs,
-  editor metadata and, for triggers, `trigger: { on: <event kind>, matches, output }`. The API, the
-  worker and the editor all import the registry (`blockSpecs`), so validation, execution and UI
-  cannot drift apart. `BlockType` is derived from the registry.
+  editor metadata and, for triggers, `trigger: { on: <event kind>, matches, output }`. Blocks
+  that suspend declare `wait: { on: <event kind>, matches }`, where `matches` sees the waiting
+  step's config and rendered inputs. The API, the worker and the editor all import the registry
+  (`blockSpecs`), so validation, execution and UI cannot drift apart. `BlockType` is derived from the registry.
 * **Block handler** (`apps/server/src/engine/blocks/<block>.ts`): the runtime half of every
   non-trigger block (see §4.1). The handler registry `satisfies` a type built from the specs, so a
   block without a handler does not compile.
@@ -137,7 +138,7 @@ sequenceDiagram
   W->>W: verify HMAC, normalize, drop echoes/own comments
   W->>DB: tx{ INSERT inbox_events ON CONFLICT DO NOTHING#59; enqueue route-event }
   W-->>M: 200 (no Graph API calls in the request)
-  R->>DB: tx{ lock event#59; suspended step of the contact consumes it? resume : match triggers → INSERT run, trigger step, pending children#59; enqueue execute-step }
+  R->>DB: tx{ lock event#59; a waiting step's wait.matches accepts it? resume : match triggers → INSERT run, trigger step, pending children#59; enqueue execute-step }
   S->>DB: tx1{ lock run#59; step pending? render inputs#59; mark running#59; choose recipient }
   S->>IG: send (outside any transaction)
   S->>DB: tx2{ lock run#59; store output#59; INSERT children pending#59; enqueue#59; recompute run status }
@@ -148,10 +149,11 @@ sequenceDiagram
    `route-event` in the same transaction. pg-boss accepts our transaction as its `db`, so this is
    a transactional outbox: an event is stored iff its routing job exists. Duplicates from Meta
    retries hit the unique key and are silently dropped.
-2. **Routing** (`routeEvent`). Upsert the contact, then look for a **waiting step of the same
-   contact whose handler consumes this event kind** (`on.message` for Wait for reply), in any run
-   of that contact, even one whose other branches are still running. If its handler takes the event,
-   the event is **consumed**: it does not also fire triggers, because it is an answer, not a new
+2. **Routing** (`routeEvent`). Upsert the contact, then look for a **waiting step of the account
+   whose block declares the event is for it** (`wait.matches` over the step's config and inputs;
+   Wait for reply matches DMs from its `user_id`), newest first, even in a run whose other
+   branches are still running. Nothing is correlated app-wide: it is the block's call. If the
+   block's handler (`on`) takes the event, the event is **consumed**: it does not also fire triggers, because it is an answer, not a new
    conversation. Otherwise every active automation whose trigger declares this event kind and
    matches gets a run. The trigger step is written as succeeded with the trigger's declared output,
    its children become `pending` and are enqueued.
@@ -224,7 +226,7 @@ send_link                   succeeded   "Here is the link … bob@x.io"     (rec
 | Concurrent jobs of the same run (fan-out branches, reply vs timeout) | Every transition locks the run row (`SELECT … FOR UPDATE`), and a suspended step's status is re-checked under that lock, so the reply/timeout race has a single winner |
 | Same person comments "pricing" 3 times | Partial unique index: one in-flight run per (automation, contact). Later comments are recorded but don't start new runs, so no spam |
 | Several automations waiting on one person | The reply goes to the most recently started waiting step (the latest question asked) |
-| Reply arrives before the wait step starts | When a step suspends, the executor replays the contact's events of the kinds its handler consumes, received since the previous step started (`replayEarlyEvents`) |
+| Reply arrives before the wait step starts | When a step suspends, the executor replays the events its block matches, received since the previous step started (`replayEarlyEvents`) |
 | Editing a live automation | Versions are immutable and runs pin `version_id` |
 | Loops (our reply triggers our automation) | Normalizer drops `is_echo` messages and comments authored by the account itself |
 | Webhook spoofing | HMAC-SHA256 over the raw body with the app secret, constant-time compare |

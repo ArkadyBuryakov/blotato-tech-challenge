@@ -4,11 +4,11 @@ import {
   triggerMatches,
   triggerNode,
   triggerOutput,
+  waitMatches,
   type InboundEvent,
 } from "@app/core";
 import { sql } from "kysely";
 import type { DB, Tx } from "../db/client";
-import { handlerFor } from "./blocks";
 import type { EngineDeps } from "./deps";
 import { eventHandler, type ContactProfile } from "./events";
 import { lockRun, refreshRunStatus, scheduleNext } from "./runs";
@@ -55,8 +55,8 @@ const upsertContact = (db: DB | Tx, accountId: string, igsid: string, profile: C
 
 /**
  * Route one inbox event, whatever its kind:
- * 1. if a suspended step of this contact consumes the event kind, it resumes that step (and is
- *    not used as a trigger);
+ * 1. if a suspended step declares the event is for it, it resumes that step (and is not used
+ *    as a trigger);
  * 2. otherwise every active automation whose trigger declares this kind and matches starts a run.
  * The whole decision commits atomically with the jobs it enqueues; re-running it is a no-op.
  */
@@ -76,7 +76,7 @@ export const routeEvent = async (deps: EngineDeps, eventId: number): Promise<voi
     await trx.updateTable("inbox_events").set({ processed_at: now }).where("id", "=", eventId).execute();
     await upsertContact(trx, event.accountId, contactId, profile);
 
-    if (await resumeSuspendedStep(deps, trx, event, contactId)) return;
+    if (await resumeSuspendedStep(deps, trx, event)) return;
 
     const contact = await trx
       .selectFrom("contacts")
@@ -128,24 +128,23 @@ export const routeEvent = async (deps: EngineDeps, eventId: number): Promise<voi
 };
 
 /**
- * Correlation: an event resumes the most recently suspended step, in any run of its contact,
- * whose block consumes that event kind (whatever else the run is doing in parallel branches).
- * If several automations wait on the same person, the latest question gets the answer.
+ * Correlation: an event resumes the most recently suspended step of the account whose block
+ * declares that it is for it (`wait.matches` over the step's config and inputs), whatever else
+ * the run is doing in parallel branches. If several steps match, the latest question gets the answer.
  */
-const resumeSuspendedStep = async (deps: EngineDeps, trx: Tx, event: InboundEvent, contactId: string): Promise<boolean> => {
+const resumeSuspendedStep = async (deps: EngineDeps, trx: Tx, event: InboundEvent): Promise<boolean> => {
   const waiting = await trx
     .selectFrom("run_steps as s")
     .innerJoin("runs as r", "r.id", "s.run_id")
     .innerJoin("automation_versions as v", "v.id", "r.version_id")
-    .select(["s.run_id", "s.node_id", "v.graph"])
+    .select(["s.run_id", "s.node_id", "s.input", "v.graph"])
     .where("r.ig_account_id", "=", event.accountId)
-    .where("r.contact_id", "=", contactId)
     .where("s.status", "=", "waiting")
     .orderBy("s.started_at", "desc")
     .execute();
   for (const w of waiting) {
-    const type = findNode(w.graph, w.node_id)?.type;
-    if (!type || !handlerFor(type)?.on?.[event.kind]) continue;
+    const node = findNode(w.graph, w.node_id);
+    if (!node || !waitMatches(node, (w.input ?? {}) as Record<string, string>, event)) continue;
     const run = await lockRun(trx, w.run_id);
     // Re-checked under the lock: the step may have moved on since the select.
     if (run && (await deliverEvent({ deps, trx, run, graph: w.graph, nodeId: w.node_id }, event))) return true;
